@@ -73,3 +73,89 @@ Thêm dòng sau (đổi đúng đường dẫn máy bạn):
 
 - `GET /` kiểm tra trạng thái service.
 - `POST /run-now` chạy job ngay lập tức (không cần đợi cron).
+
+## 7) CI/CD (GitHub Actions)
+
+Project đã được thêm 2 luồng tự động:
+
+- **CI** (`.github/workflows/ci.yml`)
+  - Chạy khi `push`/`pull_request` lên `main` hoặc `master`.
+  - Cài dependencies từ `requirements.txt`.
+  - Kiểm tra syntax với `python -m compileall`.
+  - Smoke test import `app.py` và `worker.py`.
+
+- **CD** (`.github/workflows/cd.yml`)
+  - Chạy khi `push` lên `main`/`master`, khi tạo tag `v*`, hoặc chạy tay (`workflow_dispatch`).
+  - Build Docker image từ `Dockerfile`.
+  - Push image lên **GHCR** với các tag theo branch/tag/commit SHA.
+  - Có bước tùy chọn gọi webhook deploy nếu cấu hình `DEPLOY_WEBHOOK_URL`.
+
+### Secrets khuyến nghị
+
+Trong GitHub repo settings → **Secrets and variables** → **Actions**, thêm:
+
+- `DEPLOY_WEBHOOK_URL` (optional): URL để trigger deploy trên server/platform của bạn.
+
+> Ghi chú: Push lên GHCR dùng sẵn `GITHUB_TOKEN` nên không cần tạo PAT cho luồng mặc định.
+
+## 8) Deploy source này lên VPS (Docker + GitHub Actions)
+
+Dưới đây là cách deploy thực tế để service chạy tự động sau mỗi lần merge vào `main`.
+
+### Bước A: Chuẩn bị VPS
+
+Cài Docker + Docker Compose plugin (Ubuntu ví dụ):
+
+```bash
+sudo apt update
+sudo apt install -y docker.io docker-compose-plugin
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+Tạo thư mục deploy:
+
+```bash
+sudo mkdir -p /opt/job-service
+sudo chown -R $USER:$USER /opt/job-service
+cd /opt/job-service
+```
+
+Tạo file `.env` với đúng biến môi trường của app (SOURCE_API_URL, TELEGRAM_BOT_TOKEN, ...).
+
+### Bước B: Cấu hình GitHub Secrets
+
+Vào **Settings → Secrets and variables → Actions** thêm:
+
+- `VPS_HOST`: IP/Domain server
+- `VPS_USER`: user SSH (vd: `ubuntu`)
+- `VPS_SSH_KEY`: private key SSH (dạng PEM)
+- `VPS_PORT`: port SSH (optional, mặc định 22)
+- `GHCR_PAT`: GitHub token có quyền `read:packages` để pull image private từ GHCR
+
+### Bước C: Luồng CI/CD/Deploy
+
+1. `CI` chạy test/check khi push hoặc pull request.
+2. `CD` build + push image lên `ghcr.io/<owner>/<repo>:main`.
+3. `Deploy to VPS` (workflow mới) tự SSH vào VPS và chạy:
+   - `docker compose pull`
+   - `docker compose up -d`
+
+### Bước D: Deploy thủ công lần đầu trên VPS
+
+Nếu muốn chạy tay trước khi dùng workflow auto, trên VPS:
+
+```bash
+docker login ghcr.io -u <github-username>
+docker compose -f deploy-compose.yml pull
+docker compose -f deploy-compose.yml up -d
+```
+
+### Verify sau deploy
+
+```bash
+docker ps
+curl http://<VPS_IP>:5000/
+```
+
+Nếu trả về JSON trạng thái service là deploy thành công.

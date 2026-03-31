@@ -1,0 +1,45 @@
+name: Deploy to VPS
+
+on:
+  workflow_run:
+    workflows: ["CD"]
+    types:
+      - completed
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || '22' }}
+          script: |
+            set -e
+            mkdir -p /opt/job-service
+            cd /opt/job-service
+
+            cat > deploy-compose.yml <<'EOF'
+            services:
+              job-service:
+                image: ghcr.io/${{ github.repository }}:main
+                container_name: job-service
+                restart: unless-stopped
+                env_file:
+                  - .env
+                ports:
+                  - "5000:5000"
+            EOF
+
+            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+            docker compose -f deploy-compose.yml pull
+            docker compose -f deploy-compose.yml up -d
+            docker image prune -f

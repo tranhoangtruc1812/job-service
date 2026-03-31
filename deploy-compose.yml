@@ -1,0 +1,15 @@
+services:
+  job-service:
+    image: ${IMAGE_NAME:-ghcr.io/owner/repo:main}
+    container_name: job-service
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "5000:5000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
