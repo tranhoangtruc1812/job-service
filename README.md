@@ -73,3 +73,27 @@ Thêm dòng sau (đổi đúng đường dẫn máy bạn):
 
 - `GET /` kiểm tra trạng thái service.
 - `POST /run-now` chạy job ngay lập tức (không cần đợi cron).
+
+## 7) CI/CD (GitHub Actions)
+
+Project đã được thêm 2 luồng tự động:
+
+- **CI** (`.github/workflows/ci.yml`)
+  - Chạy khi `push`/`pull_request` lên `main` hoặc `master`.
+  - Cài dependencies từ `requirements.txt`.
+  - Kiểm tra syntax với `python -m compileall`.
+  - Smoke test import `app.py` và `worker.py`.
+
+- **CD** (`.github/workflows/cd.yml`)
+  - Chạy khi `push` lên `main`/`master`, khi tạo tag `v*`, hoặc chạy tay (`workflow_dispatch`).
+  - Build Docker image từ `Dockerfile`.
+  - Push image lên **GHCR** với các tag theo branch/tag/commit SHA.
+  - Có bước tùy chọn gọi webhook deploy nếu cấu hình `DEPLOY_WEBHOOK_URL`.
+
+### Secrets khuyến nghị
+
+Trong GitHub repo settings → **Secrets and variables** → **Actions**, thêm:
+
+- `DEPLOY_WEBHOOK_URL` (optional): URL để trigger deploy trên server/platform của bạn.
+
+> Ghi chú: Push lên GHCR dùng sẵn `GITHUB_TOKEN` nên không cần tạo PAT cho luồng mặc định.
