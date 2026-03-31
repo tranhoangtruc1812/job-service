@@ -1,20 +1,34 @@
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from flask import Flask, jsonify
+from apscheduler.schedulers.background import BackgroundScheduler
+import atexit
 
 from worker import run_job
 
 app = Flask(__name__)
 
+RUN_TIME = os.getenv("RUN_TIME", "20")
+# Khởi tạo Background Scheduler để chạy ngầm cùng Flask
+scheduler = BackgroundScheduler()
+# Cấu hình job chạy mỗi 20 phút
+scheduler.add_job(func=run_job, trigger="interval", minutes=int(RUN_TIME))
+scheduler.start()
+
+# Tắt scheduler an toàn khi tắt app
+atexit.register(lambda: scheduler.shutdown())
 
 @app.route("/")
 def index():
     return jsonify(
         {
             "service": "job-service",
-            "mode": "cron + worker",
+            "mode": "integrated (flask + apscheduler)",
             "status": "running",
-            "cron_schedule": "*/20 * * * *",
+            "cron_schedule": f"Every {RUN_TIME} minutes",
         }
     )
 

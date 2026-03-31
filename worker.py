@@ -1,5 +1,9 @@
 import logging
 import os
+from dotenv import load_dotenv
+from datetime import datetime, timedelta
+load_dotenv()
+
 from typing import Any, Dict, Optional
 
 import requests
@@ -45,20 +49,38 @@ def refresh_access_token() -> str:
     if not TOKEN_CLIENT_ID or not TOKEN_CLIENT_SECRET:
         raise RuntimeError("TOKEN_CLIENT_ID and TOKEN_CLIENT_SECRET are required")
 
-    payload: Dict[str, str] = {
-        "grant_type": TOKEN_GRANT_TYPE,
-        "client_id": TOKEN_CLIENT_ID,
-        "client_secret": TOKEN_CLIENT_SECRET,
+    params: Dict[str, str] = {
+        "grantType": TOKEN_GRANT_TYPE,
+        "appId": TOKEN_CLIENT_ID,
+        "secret": TOKEN_CLIENT_SECRET,
     }
     if TOKEN_SCOPE:
-        payload["scope"] = TOKEN_SCOPE
+        params["scope"] = TOKEN_SCOPE
 
     logger.info("Refreshing access token via %s", TOKEN_URL)
-    response = requests.post(TOKEN_URL, data=payload, timeout=SOURCE_API_TIMEOUT)
+    
+    token_auth_header = os.getenv("TOKEN_BASIC_AUTH", "Basic cGVkYWNvOlBFREFDTzAx")
+    headers = {
+        "Authorization": token_auth_header
+    }
+    
+    # Using params=params to attach them as query parameters like the URL example you provided
+    response = requests.post(TOKEN_URL, headers=headers, params=params, timeout=SOURCE_API_TIMEOUT, verify=False)
+    
+    # fallback to GET if POST is not allowed
+    if response.status_code == 405:
+        response = requests.get(TOKEN_URL, headers=headers, params=params, timeout=SOURCE_API_TIMEOUT, verify=False)
+        
     response.raise_for_status()
     token_data = response.json()
 
-    new_token = token_data.get(TOKEN_FIELD_NAME)
+    # Handling nested data responses in case the token is inside a data object
+    new_token = None
+    if TOKEN_FIELD_NAME in token_data:
+        new_token = token_data[TOKEN_FIELD_NAME]
+    elif "data" in token_data and isinstance(token_data["data"], dict):
+        new_token = token_data["data"].get(TOKEN_FIELD_NAME)
+
     if not new_token:
         raise RuntimeError(f"Token field '{TOKEN_FIELD_NAME}' not found in response")
 
@@ -67,21 +89,33 @@ def refresh_access_token() -> str:
 
 def call_source_api(access_token: Optional[str]) -> requests.Response:
     headers = _build_source_headers(access_token or "")
-    logger.info("Calling source API: %s", SOURCE_API_URL)
+    
+    station_id = os.getenv("SOURCE_API_STATION_ID", "1609d29e-93f9-4d0e-8b56-eb03bb39491b")
+    
+    # Calculate dates dynamically
+    now = datetime.now()
+    start_date = now.replace(day=1).strftime("%Y-%m-%d")
+    end_date = now.strftime("%Y-%m-%d")
+    
+    params = {
+        "dataType": "kdtd",
+        "endDate": end_date,
+        "page": 0,
+        "pageSize": 10,
+        "startDate": start_date,
+        "stationId": station_id
+    }
+    logger.info("Calling source API %s with params %s", SOURCE_API_URL, params)
     if SOURCE_API_METHOD == "POST":
-        return requests.post(SOURCE_API_URL, headers=headers, timeout=SOURCE_API_TIMEOUT)
-    return requests.get(SOURCE_API_URL, headers=headers, timeout=SOURCE_API_TIMEOUT)
+        return requests.post(SOURCE_API_URL + "/minute", headers=headers, params=params, timeout=SOURCE_API_TIMEOUT)
+    return requests.get(SOURCE_API_URL + "/minute", headers=headers, params=params, timeout=SOURCE_API_TIMEOUT)
 
 
 def fetch_data() -> Dict[str, Any]:
     global SOURCE_API_ACCESS_TOKEN
 
+    SOURCE_API_ACCESS_TOKEN = refresh_access_token()
     response = call_source_api(SOURCE_API_ACCESS_TOKEN)
-
-    if response.status_code == 401 and TOKEN_URL:
-        logger.warning("Source API token expired (401). Refreshing token and retrying...")
-        SOURCE_API_ACCESS_TOKEN = refresh_access_token()
-        response = call_source_api(SOURCE_API_ACCESS_TOKEN)
 
     response.raise_for_status()
 
@@ -91,11 +125,107 @@ def fetch_data() -> Dict[str, Any]:
         return {"raw": response.text}
 
 
+
 def build_message(data: Dict[str, Any]) -> str:
+    try:
+        run_time_minutes = int(os.getenv("RUN_TIME", "20"))
+    except ValueError:
+        run_time_minutes = 20
+
+    cutoff_time = datetime.now() - timedelta(minutes=run_time_minutes)
+
+    items = []
+    if isinstance(data, dict) and "data" in data and isinstance(data["data"], dict):
+        items = data["data"].get("items", [])
+
+    filtered_items = []
+    for item in items:
+        time_str = item.get("time")
+        if time_str:
+            try:
+                item_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
+                if item_time >= cutoff_time:
+                    filtered_items.append(item)
+            except ValueError:
+                pass
+
+    if not items:
+        # Fallback nếu API trả về cấu trúc khác
+        return (
+            "<b>Job Service Update</b>\n"
+            f"Source: <code>{SOURCE_API_URL}</code>\n"
+            f"Data: <code>{str(data)[:3000]}</code>"
+        )
+        
+    if not filtered_items:
+        return "<b>📊 Báo cáo Quan trắc</b>\nKhông có dữ liệu mới trong khoảng thời gian vừa qua."
+
+    # Sắp xếp các record theo thời gian giảm dần (mới nhất lên trước)
+    filtered_items.sort(key=lambda x: x.get("time", ""), reverse=True)
+    
+    # Lấy tối đa 4 record để bảng không bị vượt quá màn hình điện thoại
+    display_items = filtered_items[:4]
+    
+    times = []
+    for item in display_items:
+        time_str = item.get("time", "")
+        # Lấy lấy đoạn giờ:phút, ví dụ "11:15"
+        t = time_str[11:16] if len(time_str) >= 16 else "--:--"
+        times.append(t)
+        
+    metrics = {
+        "SO2": "so2_v",
+        "CO": "co_v",
+        "NOx": "nox_v",
+        "O2": "o2_v",
+        "PM": "pm_v",
+        "Flow": "flow_v",
+        "Temp": "temp_v",
+        "P": "pressure_v",
+        "HCl": "hcl_v",
+        "T1": "indicator1_v",
+        "T2": "indicator2_v"
+    }
+
+    def format_val(val):
+        if val is None:
+            return "-"
+        try:
+            v = float(val)
+            if v >= 1000:
+                return f"{v:.0f}"
+            if v >= 10:
+                return f"{v:.1f}"
+            return f"{v:.2f}"
+        except (ValueError, TypeError):
+            return "-"
+
+    # Tiêu đề cột (Thông số hàng ngang)
+    # Tên cột cắt ngắn tối đa 4 ký tự để tiết kiệm chiều ngang
+    headers_list = ["Time "] + [f"{m[:4]:<4}" for m in metrics.keys()]
+    header_str = " | ".join(headers_list)
+    separator = "-" * len(header_str)
+    
+    rows = []
+    for item in display_items:
+        time_str = item.get("time", "")
+        t = time_str[11:16] if len(time_str) >= 16 else "--:--"
+        
+        row_vals = [f"{t:<5}"]
+        for m_label, m_key in metrics.items():
+            v_str = format_val(item.get(m_key))
+            if len(v_str) > 4:
+                v_str = v_str[:4]
+            row_vals.append(f"{v_str:>4}")
+            
+        rows.append(" | ".join(row_vals))
+        
+    table_str = "\n".join([header_str, separator] + rows)
+    
     return (
-        "<b>Job Service Update</b>\n"
-        f"Source: <code>{SOURCE_API_URL}</code>\n"
-        f"Data: <code>{str(data)[:3000]}</code>"
+        "<b>📊 KẾT QUẢ QUAN TRẮC GẦN ĐÂY</b>\n"
+        f"<i>(Lọc trong {run_time_minutes} phút, {len(filtered_items)} records)</i>\n"
+        f"<pre>{table_str}</pre>"
     )
 
 
