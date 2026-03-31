@@ -132,7 +132,7 @@ def build_message(data: Dict[str, Any]) -> str:
     except ValueError:
         run_time_minutes = 20
 
-    cutoff_time = datetime.now() - timedelta(minutes=run_time_minutes)
+    cutoff_time = datetime.now() - timedelta(minutes=run_time_minutes + 20)
 
     items = []
     if isinstance(data, dict) and "data" in data and isinstance(data["data"], dict):

@@ -15,7 +15,14 @@ RUN_TIME = os.getenv("RUN_TIME", "20")
 # Khởi tạo Background Scheduler để chạy ngầm cùng Flask
 scheduler = BackgroundScheduler()
 # Cấu hình job chạy mỗi 20 phút
-scheduler.add_job(func=run_job, trigger="interval", minutes=int(RUN_TIME))
+scheduler.add_job(
+    func=run_job, 
+    trigger="interval", 
+    minutes=int(RUN_TIME),
+    replace_existing=True,
+    misfire_grace_time=60,
+    coalesce=True,
+    max_instances=1)
 scheduler.start()
 
 # Tắt scheduler an toàn khi tắt app
