@@ -207,13 +207,24 @@ def build_message(data: Dict[str, Any]) -> str:
     separator = "-" * len(header_str)
     
     rows = []
+    warnings_list = []
     for item in display_items:
         time_str = item.get("time", "")
         t = time_str[11:16] if len(time_str) >= 16 else "--:--"
         
         row_vals = [f"{t:<5}"]
         for m_label, m_key in metrics.items():
-            v_str = format_val(item.get(m_key))
+            val = item.get(m_key)
+            v_str = format_val(val)
+
+            if m_label in ["SO2", "CO", "NOx"] and val is not None:
+                try:
+                    num_val = float(val)
+                    if num_val > 250:
+                        warnings_list.append(f"🔴 {t} - {m_label}: {num_val} (>250)")
+                except (ValueError, TypeError):
+                    pass
+
             if len(v_str) > 4:
                 v_str = v_str[:4]
             row_vals.append(f"{v_str:>4}")
@@ -222,10 +233,15 @@ def build_message(data: Dict[str, Any]) -> str:
         
     table_str = "\n".join([header_str, separator] + rows)
     
+    warning_str = ""
+    if warnings_list:
+        warning_str = "\n\n<b>🚨 CẢNH BÁO VƯỢT NGƯỠNG:</b>\n" + "\n".join(warnings_list)
+    
     return (
         "<b>📊 KẾT QUẢ QUAN TRẮC GẦN ĐÂY</b>\n"
         f"<i>(Lọc trong {run_time_minutes} phút, {len(filtered_items)} records)</i>\n"
         f"<pre>{table_str}</pre>"
+        f"{warning_str}"
     )
 
 
