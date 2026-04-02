@@ -6,8 +6,17 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: job-service-container
+    image: job_service:napshort-001
+    network_mode: "host"
     ports:
       - "5000:5000"
     env_file:
       - .env
     restart: unless-stopped
+    
+networks:
+  my-custom-net:
+    driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: 1400  # Try 1450 or 1400
+
