@@ -200,22 +200,19 @@ def build_message(data: Dict[str, Any]) -> str:
         except (ValueError, TypeError):
             return "-"
 
-    # Tiêu đề cột (Thông số hàng ngang)
-    # Tên cột cắt ngắn tối đa 4 ký tự để tiết kiệm chiều ngang
-    headers_list = ["Time "] + [f"{m[:4]:<4}" for m in metrics.keys()]
+    # Tiêu đề cột: Para và các mốc thời gian
+    headers_list = ["Para"] + [f"{t:>5}" for t in times]
     header_str = " | ".join(headers_list)
     separator = "-" * len(header_str)
     
     rows = []
     warnings_list = []
-    for item in display_items:
-        time_str = item.get("time", "")
-        t = time_str[11:16] if len(time_str) >= 16 else "--:--"
-        
-        row_vals = [f"{t:<5}"]
-        for m_label, m_key in metrics.items():
+    for m_label, m_key in metrics.items():
+        row_vals = [f"{m_label[:4]:<4}"]
+        for i, item in enumerate(display_items):
             val = item.get(m_key)
             v_str = format_val(val)
+            t = times[i]
 
             if m_label in ["SO2", "CO", "NOx"] and val is not None:
                 try:
@@ -225,9 +222,9 @@ def build_message(data: Dict[str, Any]) -> str:
                 except (ValueError, TypeError):
                     pass
 
-            if len(v_str) > 4:
-                v_str = v_str[:4]
-            row_vals.append(f"{v_str:>4}")
+            if len(v_str) > 5:
+                v_str = v_str[:5]
+            row_vals.append(f"{v_str:>5}")
             
         rows.append(" | ".join(row_vals))
         
